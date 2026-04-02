@@ -22,7 +22,7 @@ The student previously ran BlueToolkit on this machine and tested these 5 vulner
 4. **Method Confusion** — LESC NC vs PE association confusion (Soundcore Motion X600 vulnerable)
 5. **WhisperPair** (CVE-2025-36911) — Google Fast Pair unauthorized pairing
 
-Reference papers are in this directory: `sec19-antonioli.pdf` (KNOB), `2009.11776v2.pdf` (BLUR), `2021-SP-Tschirschnitz_Peukert.pdf` (Method Confusion), `Nino_man-in-the-middle_attack_on_bluetooth_secure_simple_pairing.pdf` (NiNo).
+Reference papers are in `literature/`: `sec19-antonioli.pdf` (KNOB), `2009.11776v2.pdf` (BLUR), `2021-SP-Tschirschnitz_Peukert.pdf` (Method Confusion), `Nino_man-in-the-middle_attack_on_bluetooth_secure_simple_pairing.pdf` (NiNo). BlueToolkit slides and device inventory are also in `literature/`. Progress reports are in `progress_reports/`.
 
 ## Key Technical Decisions Already Made
 
