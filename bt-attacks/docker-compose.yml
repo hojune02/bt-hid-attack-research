@@ -1,0 +1,65 @@
+version: "3.9"
+
+# All attack containers share the same privileged host-network profile.
+# Usage:
+#   docker compose run nino          # NiNo full MITM
+#   docker compose run knob          # KNOB full MITM (Mode A default)
+#   docker compose run method-confusion
+#   docker compose run blur
+#   docker compose run whisperpair
+#
+# Only run ONE attack container at a time — they all fight for hci0.
+# Before switching: docker compose run <prev> btmgmt power off
+
+x-bt-common: &bt-common
+  privileged: true
+  network_mode: host
+  volumes:
+    - /var/run/dbus:/var/run/dbus
+    - /dev/uhid:/dev/uhid
+  environment:
+    - HCI_DEV=hci0
+
+services:
+  base:
+    build:
+      context: ./docker-base
+    image: bt-attack-base
+    <<: *bt-common
+    command: /bin/bash
+
+  nino:
+    build:
+      context: ./nino
+    image: bt-attack-nino
+    <<: *bt-common
+    command: python3 nino_mitm.py
+
+  knob:
+    build:
+      context: ./knob
+    image: bt-attack-knob
+    <<: *bt-common
+    # Pass --mode-b to use InternalBlue (Broadcom only)
+    command: python3 knob_mitm.py
+
+  method-confusion:
+    build:
+      context: ./method-confusion
+    image: bt-attack-method-confusion
+    <<: *bt-common
+    command: python3 confusion_mitm.py
+
+  blur:
+    build:
+      context: ./blur
+    image: bt-attack-blur
+    <<: *bt-common
+    command: python3 blur_mitm.py
+
+  whisperpair:
+    build:
+      context: ./whisperpair
+    image: bt-attack-whisperpair
+    <<: *bt-common
+    command: python3 whisperpair_mitm.py
