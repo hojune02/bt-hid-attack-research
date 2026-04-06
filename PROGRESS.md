@@ -7,8 +7,8 @@ Update this file at the end of every work session. Claude reads this at the star
 ## Current Status
 
 **Week:** Week 1 — in progress
-**Last updated:** 2026-04-01
-**Next task:** Day 5 — Method Confusion Full MITM
+**Last updated:** 2026-04-06
+**Next task:** Day 5 continued — complete method_confusion_mitm.py (missing symbols + f5/f6) OR run BThack full_mitm.c once CSR dongles arrive
 
 ---
 
@@ -20,7 +20,7 @@ Update this file at the end of every work session. Claude reads this at the star
 | 2 | NiNo Full MITM — core relay architecture | [x] Done | nino/nino_mitm.py — dual-role scatternet relay, keystroke logger, injector via uhid. Needs live test on Ubuntu lab machine with real keyboard. |
 | 3 | KNOB Full MITM Mode A — relay + 1-byte entropy | [x] Done | knob/knob_mitm.py — entropy reduction via btmgmt, E0 cipher + 256-key brute force, relay inherited from NiNo, offline --bruteforce mode for pre-captured params. Needs unpatched kernel (< 5.1) for live entropy reduction; patched kernels require Mode B. |
 | 4 | KNOB Mode B — InternalBlue passive intercept (optional) | [x] Done | knob/knob_mode_b.py — chip detection, PATCH_TABLE for BCM20702A1/4335C0/4345C0/4358A3/4375B1, InternalBlue writeMem patch, passive HCI sniffer for EN_RAND capture, E0 brute force integration. Functional only on Broadcom; gracefully skips otherwise. |
-| 5 | Method Confusion Full MITM | [ ] Not started | |
+| 5 | Method Confusion Full MITM | [~] In progress | method_confusion_mitm.py skeleton written; BThack-master PoC analysed; hardware blocker: needs 2× CSR USB dongles |
 | 6 | BLUR + WhisperPair Full MITM | [ ] Not started | |
 | 7 | Integration + Docker polish | [ ] Not started | |
 
@@ -45,7 +45,7 @@ Update this file at the end of every work session. Claude reads this at the star
 - [~] `docker-base/` — Dockerfile written; must `docker build` on Ubuntu lab machine and run `check_env.sh` to confirm
 - [~] `nino/` — true two-leg MITM implemented (2026-04-02); 37 offline tests pass; needs live BR/EDR keyboard + MacBook for full end-to-end test
 - [~] `knob/` — knob_mitm.py written; needs unpatched kernel for live entropy reduction
-- [ ] `method-confusion/` — Method Confusion full MITM
+- [~] `method-confusion/` — method_confusion_mitm.py skeleton written; BThack-master PoC available as fallback; blocked on CSR USB dongles for live test
 - [ ] `blur/` — BLUR full MITM
 - [ ] `whisperpair/` — WhisperPair full MITM
 
@@ -92,6 +92,7 @@ gatttool -b <BD_ADDR> --primary                # GATT services (BLE)
 
 | Date | Work Done | Outcome |
 |------|-----------|---------|
+| 2026-04-06 | Day 5 — Method Confusion: wrote method_confusion_mitm.py skeleton; analysed BThack-master PoC | method_confusion_mitm.py has full structure (open_hci_user, setup_advertise_as_keyboard, connect_to_keyboard, accept_pc_connection, smp_run_leg_a/b corrected, gatt_setup_keyboard, gatt_relay_loop, gatt_inject, main). 6 bugs fixed in SMP legs (missing Ca send, wrong passkey recovery via g2, NC ordering). 6 missing symbols identified (decode_hid_report, make_hid_report, _ASCII_TO_HID, RELEASE_REPORT, compute_dhkey_check_a/b). BThack-master (Tschirschnitz et al. PoC) fully analysed: full_mitm.c is a complete C+BTstack MITM but requires 2× USB BT dongles (CSR 8510 / 0a12:0001) and forked BTstack (lupinglui/btstack bthack_mods). Current Intel hci0 is incompatible. Hardware decision: order 2× CSR 8510 dongles (ASUS USB-BT400 or confirmed 0a12:0001). |
 | 2026-03-31 | Plan created and approved | PLAN.md, CLAUDE.md, PROGRESS.md created |
 | 2026-04-01 | Day 1 partial — environment setup without device inventory | Created bt-attacks/ directory tree, docker-base/Dockerfile, all attack Dockerfiles (stubs), docker-compose.yml, check_env.sh. Device inventory and actual Docker build deferred to Ubuntu lab machine. |
 | 2026-04-01 | Day 2 — NiNo Full MITM | Wrote nino/nino_mitm.py: NoInputNoOutput adapter setup via btmgmt, dual-role scatternet (L2CAP PSM 0x11+0x13 keyboard side + uhid PC side), relay loop with HID boot keyboard decoder, keystroke injector. |

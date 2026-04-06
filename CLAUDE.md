@@ -32,6 +32,8 @@ Reference papers are in `literature/`: `sec19-antonioli.pdf` (KNOB), `2009.11776
 - **No jamming needed:** attacks are performed at pairing stage when device is in pairing mode; lab controls the pairing window by turning off PC Bluetooth temporarily
 - **KNOB Mode A** (relay-based, no firmware): attacker as MITM relay proposes `Lmin=1` to both sides. KNOB **Mode B** (InternalBlue, Broadcom-only) is optional. Lab chip is Intel — Mode B not applicable.
 - **Docker:** `docker run --privileged --net=host -v /var/run/dbus:/var/run/dbus -v /dev/uhid:/dev/uhid`
+- **Method Confusion has an existing PoC:** `BThack-master/` (Tschirschnitz et al.) contains a complete C+BTstack MITM (`full_mitm.c`). It requires 2× USB BT dongles with CSR 8510 chipset (`lsusb` ID `0a12:0001`) and the forked BTstack (`lupinglui/btstack`, branch `bthack_mods`). The Intel onboard `hci0` is **not compatible**. The Python `method_confusion_mitm.py` is an alternative single-adapter approach but is incomplete (missing `decode_hid_report`, `make_hid_report`, `_ASCII_TO_HID`, `RELEASE_REPORT`, `compute_dhkey_check_a/b`).
+- **Hardware needed for Method Confusion:** 2× CSR 8510 USB dongles. Confirmed-compatible model: ASUS USB-BT400 (`0b05:17cb`). Verify any dongle with `lsusb` showing `0a12:0001` before purchasing a second unit.
 
 ## Target Directory Structure
 
